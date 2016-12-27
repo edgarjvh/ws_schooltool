@@ -21,7 +21,7 @@ namespace schoolTool
     [System.ComponentModel.ToolboxItem(false)]
     // Para permitir que se llame a este servicio web desde un script, usando ASP.NET AJAX, quite la marca de comentario de la línea siguiente. 
     [System.Web.Script.Services.ScriptService]
-    public class schooltool : System.Web.Services.WebService
+    public class schooltool : WebService
     {
         private static string cadena = "server=154.42.65.212;uid=userschooltool;pwd=schooltool;database=schooltooldb";
         
@@ -1082,37 +1082,35 @@ namespace schoolTool
                 {
                     conn.Open();
 
-                    string query1 = "select g.*, " + 
-                        "IFNULL(d.nombres, '') as nombresDoc, IFNULL(d.apellidos, '') as apellidosDoc, " + 
-                        "IFNULL(r.nombres, '') as nombresRep, IFNULL(r.apellidos, '') as apellidosRep " +
-                        "from registrosgcm as g left join docentes as d on g.idDocente = d.idDocente " +
-                        "left join representantes as r on g.idRepresentante = r.idRepresentante where ";
+                    string query1 = "select * from registrosgcm where ";
 
-                    query1 += via.ToString() == "0" ? "d.idDocente = @1;" : "r.idRepresentante = @1;";
+                    string queryDoc = "select nombres as nombresDoc, apellidos as apellidosDoc from docentes where idDocente = @2";
+                    string queryRep = "select nombres as nombresRep, apellidos as apellidosRep from representantes where idRepresentante = @2";
 
+                    query1 += via.ToString() == "1" ? "idDocente = @1;" + queryRep : "idRepresentante = @1;"+queryDoc;
+                    
                     cmd = new MySqlCommand(query1, conn);
-                    cmd.Parameters.AddWithValue("@1", via == 0 ? idDocente : idRepresentante);
+                    cmd.Parameters.AddWithValue("@1", via == 1 ? idDocente : idRepresentante);
+                    cmd.Parameters.AddWithValue("@2", via == 1 ? idRepresentante : idDocente);
                     da = new MySqlDataAdapter(cmd);
                     ds = new DataSet();
                     da.Fill(ds);
 
                     if (ds.Tables[0].Rows.Count > 0)
                     {
-                        DataRow row = ds.Tables[0].Rows[0];
-                        string idGcm = row["idGcm"].ToString();
-                        string apiServidor = row["apiServidor"].ToString();
-                        string nombresDoc = row["nombresDoc"].ToString();
-                        string apellidosDoc = row["apellidosDoc"].ToString();
-                        string nombresRep = row["nombresRep"].ToString();
-                        string apellidosRep = row["apellidosRep"].ToString();
+                        DataRow row1 = ds.Tables[0].Rows[0];
+                        DataRow row2 = ds.Tables[1].Rows[0];
 
+                        string idGcm = row1["idGcm"].ToString();
+                        string apiServidor = row1["apiServidor"].ToString();
+                        
                         string GCM_URL = "https://gcm-http.googleapis.com/gcm/send";
 
                         string query2 = "insert into mensajes (via,idDocente,idRepresentante,mensaje,fechaHora,estado) " +
                         "values (@1,@2,@3,@4,@5,@6);select last_insert_id() as 'id';";
 
                         MySqlCommand cmd2 = new MySqlCommand(query2, conn);
-                        cmd2.Parameters.AddWithValue("@1", 1);
+                        cmd2.Parameters.AddWithValue("@1", via);
                         cmd2.Parameters.AddWithValue("@2", idDocente);
                         cmd2.Parameters.AddWithValue("@3", idRepresentante);
                         cmd2.Parameters.AddWithValue("@4", texto);
@@ -1132,20 +1130,18 @@ namespace schoolTool
                         mensaje.fechaHora = DateTime.Parse(fechaHora);
                         mensaje.Estado = 1;
 
-                        if (!nombresDoc.Equals("") && !apellidosDoc.Equals(""))
+                        if (via == 0)
                         {
-                            string[] arrayNombresDoc = nombresDoc.Split(' ');
-                            string[] arrayApellidosDoc = apellidosDoc.Split(' ');
+                            string[] arrayNombresDoc = row2["nombresDoc"].ToString().Split(' ');
+                            string[] arrayApellidosDoc = row2["apellidosDoc"].ToString().Split(' ');
                             mensaje.NombreDocente = "Doc. " + arrayApellidosDoc[0] + ", " + arrayNombresDoc[0];
-                        }
-
-                        if (!nombresRep.Equals("") && !apellidosRep.Equals(""))
+                        }else
                         {
-                            string[] arrayNombresRep = nombresRep.Split(' ');
-                            string[] arrayApellidosRep = apellidosRep.Split(' ');
+                            string[] arrayNombresRep = row2["nombresRep"].ToString().Split(' ');
+                            string[] arrayApellidosRep = row2["apellidosRep"].ToString().Split(' ');
                             mensaje.NombreRepresentante = "Rep. " + arrayApellidosRep[0] + ", " + arrayNombresRep[0];
                         }
- 
+                        
                         string msj = new JavaScriptSerializer().Serialize(new
                         {
                             Result = "INCOMING",
@@ -1276,7 +1272,7 @@ namespace schoolTool
 
                         MySqlCommand cmd2;
 
-                        if (via == 1)
+                        if (via == 0)
                         {
                             query2 += "select * from registrosGcm as r where idDocente = @1";
                             cmd2 = new MySqlCommand(query2, conn);
@@ -2038,6 +2034,81 @@ namespace schoolTool
                     {
                         Result = "OK",
                         Representados = hayRepresentados ? representados : (object)"",
+                        Institucion = hayInstitucion ? institucion : (object)""
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return new JavaScriptSerializer().Serialize(new
+                {
+                    Result = "ERROR",
+                    Message = ex.Message
+                });
+            }
+        }
+
+        [WebMethod]
+        public string getCursos(int idDocente)
+        {
+            try
+            {
+                using (MySqlConnection conn = new MySqlConnection(cadena))
+                {
+                    conn.Open();
+
+                    string query = "select c.* from cursos as c " +
+                                    "left join cursosalumnos as ca on c.idCurso = ca.idCurso " +
+                                    "where ca.idDocente = @1 group by c.idCurso order by c.grado, c.seccion asc; " +
+                                    "select * from institucion;";
+
+                    MySqlCommand cmd = new MySqlCommand(query, conn);
+                    cmd.Parameters.AddWithValue("@1", idDocente);
+                    MySqlDataAdapter da = new MySqlDataAdapter(cmd);
+                    DataSet ds = new DataSet();
+                    da.Fill(ds);
+
+                    List<Curso> cursos = new List<Curso>();
+                    Institucion institucion = new Institucion();
+
+                    bool hayCursos = false;
+                    bool hayInstitucion = false;
+
+                    if (ds.Tables[0].Rows.Count > 0)
+                    {
+                        for (int i = 0; i < ds.Tables[0].Rows.Count; i++)
+                        {
+                            Curso curso = new Curso();
+                            DataRow row = ds.Tables[0].Rows[i];
+
+                            curso.Id = (int)row["idCurso"];
+                            curso.Grado = (int)row["grado"];
+                            curso.Seccion = row["seccion"].ToString();                            
+                            cursos.Add(curso);
+                        }
+
+                        hayCursos = true;
+                    }
+
+                    if (ds.Tables[1].Rows.Count > 0)
+                    {
+
+                        institucion.Nombre = ds.Tables[1].Rows[0]["nombre"].ToString();
+                        institucion.Direccion = ds.Tables[1].Rows[0]["direccion"].ToString();
+                        institucion.Telefono1 = ds.Tables[1].Rows[0]["telefono1"].ToString();
+                        institucion.Telefono2 = ds.Tables[1].Rows[0]["telefono2"].ToString();
+                        institucion.Fundacion = int.Parse(ds.Tables[1].Rows[0]["fundacion"].ToString());
+                        institucion.Director = ds.Tables[1].Rows[0]["director"].ToString();
+                        institucion.Etapas = ds.Tables[1].Rows[0]["etapas"].ToString();
+
+                        hayInstitucion = true;
+
+                    }
+
+                    return new JavaScriptSerializer().Serialize(new
+                    {
+                        Result = "OK",
+                        Cursos = hayCursos ? cursos : (object)"",
                         Institucion = hayInstitucion ? institucion : (object)""
                     });
                 }
